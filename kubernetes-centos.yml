@@ -1,0 +1,96 @@
+- hosts: "{{target}}"
+  remote_user: root
+  tasks:
+  - name: Preparo file hosts
+    lineinfile:
+      dest: "/etc/hosts"
+      line: "{{item.line}}"
+    with_items:
+      - {line: "{{ hostvars[groups['kubernetes'][0]].inventory_hostname }}  {{ hostvars[groups['kubernetes'][0]].hostname }}" }
+      - {line: "{{ hostvars[groups['kubernetes'][1]].inventory_hostname }}  {{ hostvars[groups['kubernetes'][1]].hostname }}" }
+      - {line: "{{ hostvars[groups['kubernetes'][2]].inventory_hostname }}  {{ hostvars[groups['kubernetes'][2]].hostname }}" }
+  - name: Set hostname
+    hostname:
+      name: "{{hostname}}"
+  - name: Disabilito selinux
+    selinux:
+      state: disabled
+    register: selinux
+  - name: Disabilito firewall
+    service:
+      name: firewalld
+      state: stopped
+      enabled: no    
+  - name: schedulo il reboot
+    reboot:
+    when: selinux.changed
+  - name: Add the br_netfilter module
+    modprobe:
+      name: br_netfilter
+      state: present
+  - lineinfile:
+      path: /etc/sysctl.conf
+      line: net.bridge.bridge-nf-call-iptables = 1
+  - command: sysctl -p
+  - name: Installo i prerequisiti
+    yum:
+      name: "{{ packages }}"
+    vars:
+      packages:
+      - yum-utils
+      - lvm2
+      - device-mapper-persistent-data
+      - epel-release
+  - name: Aggiunge il repository docker
+    yum_repository:
+      name: docker-ce-stable
+      description: Docker CE Stable - $basearch
+      baseurl: https://download.docker.com/linux/centos/7/$basearch/stable
+      enabled: yes
+      gpgcheck: yes
+      gpgkey: https://download.docker.com/linux/centos/gpg
+  - name: Installo docker-ce
+    yum:
+      name: docker-ce
+      state: latest  
+  - name: Abilito e avvio il servizio docker
+    service:
+      name: docker
+      state: started
+      enabled: yes     
+  - name: Aggiunge il repository kubernetes
+    yum_repository:
+      name: Kubernetes
+      description: Kubernetes
+      baseurl: https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+      enabled: yes
+      gpgcheck: yes
+      gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg 
+              https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg      
+  - name: Installo Kubernetes
+    yum:
+      name: "{{ packages }}"
+    vars:
+      packages:
+      - kubelet 
+      - kubeadm 
+      - kubectl
+  - name: Abilito e avvio il servizio kubelet
+    service:
+      name: kubelet
+      state: started
+      enabled: yes    
+  - lineinfile:
+      path: /etc/systemd/system/kubelet.service.d/10-kubeadm.conf
+      line: 'cgroup-driver=cgroupfs'  
+  - service:
+      name: kubelet
+      state: restarted
+      daemon-reload: yes    
+  - lineinfile:
+      path: /etc/fstab
+      regexp: '^/dev/mapper/centos-swap'
+      line: '# /dev/mapper/centos-swap swap                    swap    defaults        0 0'
+  - command: swapoff -a
+
+
